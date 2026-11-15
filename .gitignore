@@ -1,0 +1,3 @@
+# Local plugin state (ruflo / claude-flow) - never commit
+.claude-flow/
+.swarm/

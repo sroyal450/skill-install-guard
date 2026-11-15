@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Install one skill folder into ~/.claude/skills/<name> after a SkillSpector scan.
+
+Usage: safe-install-skill <quarantine_dir> <skill-name>
+Refuses: bad name, missing SKILL.md, symlinks, existing destination,
+HIGH/CRITICAL/DO NOT INSTALL, failed scan. Verifies sha256 of every file.
+"""
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+# Absolute path: a fake "skillspector" earlier in PATH must not be able to fake a scan.
+SKILLSPECTOR = "/usr/local/bin/skillspector"
+
+
+def die(msg):
+    print(f"REFUSED: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def sha(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def tree_hashes(root):
+    result = {}
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            full = os.path.join(dirpath, name)
+            result[os.path.relpath(full, root)] = sha(full)
+    return result
+
+
+def main():
+    if len(sys.argv) != 3:
+        die("usage: safe-install-skill <quarantine_dir> <skill-name>")
+    src = os.path.realpath(sys.argv[1])
+    name = sys.argv[2]
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", name):
+        die("skill name must be lowercase letters, digits, hyphens")
+    if not os.path.isfile(os.path.join(src, "SKILL.md")):
+        die(f"{src} has no SKILL.md")
+    for dirpath, dirs, files in os.walk(src):
+        for entry in dirs + files:
+            if os.path.islink(os.path.join(dirpath, entry)):
+                die(f"symlink found: {os.path.join(dirpath, entry)}")
+    dest = os.path.join(os.path.expanduser("~"), ".claude", "skills", name)
+    if os.path.exists(dest):
+        die(f"{dest} already exists; remove it deliberately first")
+
+    # Stage a private copy so the files scanned are exactly the files installed
+    # (closes the gap where the quarantine folder changes after the scan).
+    tmp = tempfile.mkdtemp(prefix="safe-install-")  # mode 0700, owned by us
+    try:
+        staged = os.path.join(tmp, name)
+        shutil.copytree(src, staged, symlinks=True)
+        for dirpath, dirs, files in os.walk(staged):
+            for entry in dirs + files:
+                if os.path.islink(os.path.join(dirpath, entry)):
+                    die(f"symlink appeared during staging: {entry}")
+        if not os.path.isfile(os.path.join(staged, "SKILL.md")):
+            die("SKILL.md missing after staging")
+
+        proc = subprocess.run([SKILLSPECTOR, "scan", staged, "--no-llm", "--format", "json"],
+                              capture_output=True, text=True, timeout=100)
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            die("SkillSpector output unreadable; scan failed")
+        ra = data.get("risk_assessment") or {}
+        sev = str(ra.get("severity", "UNKNOWN")).upper()
+        rec = str(ra.get("recommendation", "UNKNOWN")).upper().replace("_", " ")
+        if (not data.get("execution_successful", False) or sev in ("HIGH", "CRITICAL")
+                or "DO NOT" in rec or rec in ("UNSAFE", "BLOCK")):
+            die(f"scan score {ra.get('score')}/100 {sev} {rec}")
+
+        before = tree_hashes(staged)
+        shutil.copytree(staged, dest, symlinks=True)
+        after = tree_hashes(dest)
+        if before != after:
+            shutil.rmtree(dest)
+            die("hash mismatch after copy; install rolled back")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"Installed '{name}' -> {dest}")
+    print(f"SkillSpector: score {ra.get('score')}/100, {sev}, {rec}, "
+          f"{len(data.get('issues') or [])} issue(s); {len(after)} file(s) verified by sha256")
+
+
+if __name__ == "__main__":
+    main()
