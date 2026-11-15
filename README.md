@@ -35,3 +35,12 @@ prompt cannot be skipped).
 - Unexpected errors in the hook allow the command (so a bug cannot break every
   command). A failed scan always blocks the install.
 - Installs done through the claude.ai web UI never pass through the hook.
+
+## Tests
+
+```bash
+python3 -I tests/test_guard.py [safe_skill_dir] [risky_skill_dir]
+```
+
+Feeds sample tool calls to the hook and checks each allow / deny / ask decision.
+The two optional folders enable the cases that need a real SkillSpector scan.
