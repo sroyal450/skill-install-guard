@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I /root/.claude/hooks/skill-install-guard.py",
+            "timeout": 120,
+            "statusMessage": "Skill install guard"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Bash(npx skills add *)",
+      "Bash(npx -y skills *)",
+      "Bash(npx --yes skills *)",
+      "Bash(claude plugin install *)",
+      "Bash(claude plugins install *)",
+      "Bash(claude mcp add *)",
+      "Bash(claude mcp add-json *)",
+      "Edit(~/.claude/skills/**)",
+      "Edit(~/.claude/plugins/**)"
+    ]
+  }
+}
